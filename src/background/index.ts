@@ -7,12 +7,47 @@ const StorageKeys = {
   IsEnabledStreaming: "isEnabledStreaming",
 } as const;
 
+/*
+NOTE: 同時に複数のコメントが届いた場合、一つずつ間隔を空けて流す。
+
+      間隔調整を content script 側でやると、Slack タブを裏に回したときに
+      Chrome のタイマー throttle を受けてコメントが流れなくなるため、
+      service worker 側で行っている（詳細は contentScripts/saveComment.ts のコメント）。
+
+      1 件目は待たずにそのまま流すので、通常の 1 件ずつ届くケースでは
+      service worker の寿命に左右されない。
+*/
+const COMMENT_INTERVAL_MS = 700;
+
+const commentQueue: string[] = [];
+let isDrainingCommentQueue = false;
+
+const drainCommentQueue = (): void => {
+  const comment = commentQueue.shift();
+
+  if (comment === undefined) {
+    isDrainingCommentQueue = false;
+    return;
+  }
+
+  chrome.storage.local.set({ comment });
+
+  setTimeout(drainCommentQueue, COMMENT_INTERVAL_MS);
+};
+
+const enqueueComment = (comment: string): void => {
+  commentQueue.push(comment);
+
+  if (isDrainingCommentQueue) return;
+
+  isDrainingCommentQueue = true;
+  drainCommentQueue();
+};
+
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   switch (request.method) {
     case "setComment":
-      chrome.storage.local.set({
-        comment: request.value,
-      });
+      enqueueComment(request.value);
       return true;
     case "deleteComment":
       chrome.storage.local.remove([StorageKeys.Comment]);

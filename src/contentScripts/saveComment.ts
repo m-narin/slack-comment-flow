@@ -8,10 +8,6 @@ const SLACK_SELECTOR_OBJ = {
   messageContainer: '[data-qa="message_container"][data-msg-ts]',
 } as const;
 
-const SCAN_DEBOUNCE_MS = 100;
-// NOTE: 複数のコメントが同時に届いた場合、一つずつ間隔を空けて流す
-const QUEUE_INTERVAL_MS = 700;
-
 /*
 NOTE: Slack のメッセージ一覧は仮想リストなので、スクロールするだけで
       過去のメッセージが DOM に足され MutationObserver が発火する。
@@ -26,10 +22,6 @@ let currentChannelId: string | null = null;
 let baselineTs = 0;
 const streamedMessageTsSet = new Set<string>();
 
-const queue: string[] = [];
-let queueTimerId: number | undefined;
-let scanTimerId: number | undefined;
-
 const isExtensionAlive = (): boolean => Boolean(chrome.runtime?.id);
 
 const getMessageContainers = (): Element[] => {
@@ -42,7 +34,10 @@ const getMessageContainers = (): Element[] => {
 const getTs = (messageContainer: Element): number =>
   Number(messageContainer.getAttribute("data-msg-ts"));
 
-const resetBaseline = (messageContainers: Element[], channelId: string): void => {
+const resetBaseline = (
+  messageContainers: Element[],
+  channelId: string
+): void => {
   currentChannelId = channelId;
   baselineTs = messageContainers.reduce(
     (latestTs, messageContainer) => Math.max(latestTs, getTs(messageContainer)),
@@ -86,57 +81,20 @@ const extractNewMessages = (): string[] => {
   return messages;
 };
 
-const stopQueue = (): void => {
-  if (queueTimerId === undefined) return;
+/*
+NOTE: この content script では setTimeout / setInterval を使わないこと。
 
-  window.clearInterval(queueTimerId);
-  queueTimerId = undefined;
-};
+      別タブに映した資料の上にコメントを流すのが本来の使い方なので、
+      Slack タブは裏に回った状態で動く必要がある。ところが Chrome は
+      バックグラウンドタブのタイマーを throttle する（1 秒に 1 回まで、
+      さらに 5 分ほど非表示が続くと 1 分に 1 回まで）ため、
+      デバウンスや送信間隔をタイマーで作るとコメントが流れなくなる。
 
-const sendNextComment = (): void => {
-  if (!isExtensionAlive()) {
-    queue.length = 0;
-    stopQueue();
-    return;
-  }
-
-  const message = queue.shift();
-
-  if (message === undefined) {
-    stopQueue();
-    return;
-  }
-
-  chrome.runtime.sendMessage({
-    method: "setComment",
-    value: decodeHTMLSpecialWord(message),
-  });
-};
-
-const startQueue = (): void => {
-  if (queueTimerId !== undefined) return;
-
-  sendNextComment();
-  queueTimerId = window.setInterval(sendNextComment, QUEUE_INTERVAL_MS);
-};
-
-const observer = new MutationObserver(() => {
-  // 拡張機能のコンテキストが有効かチェック
-  if (!isExtensionAlive()) {
-    observer.disconnect();
-    return;
-  }
-
-  // NOTE: Slack は入力中表示などでも大量に DOM が変わるのでまとめてから走査する
-  if (scanTimerId !== undefined) return;
-
-  scanTimerId = window.setTimeout(() => {
-    scanTimerId = undefined;
-    void scanAndEnqueue();
-  }, SCAN_DEBOUNCE_MS);
-});
-
-const scanAndEnqueue = async (): Promise<void> => {
+      MutationObserver のコールバックと chrome.runtime.sendMessage は
+      throttle されないので、走査と送信はコールバックの中で同期的に行い、
+      複数コメントの間隔調整は service worker 側（background/index.ts）に任せる。
+*/
+const sendNewComments = async (): Promise<void> => {
   try {
     /*
     NOTE: 有効・無効に関わらず走査して既読にしておく。
@@ -156,8 +114,12 @@ const scanAndEnqueue = async (): Promise<void> => {
 
     if (!isEnabledStreaming) return;
 
-    queue.push(...messages);
-    startQueue();
+    messages.forEach((message) => {
+      chrome.runtime.sendMessage({
+        method: "setComment",
+        value: decodeHTMLSpecialWord(message),
+      });
+    });
   } catch (e) {
     // Extension context invalidated エラーの場合はオブザーバーを停止
     if (
@@ -170,6 +132,26 @@ const scanAndEnqueue = async (): Promise<void> => {
     console.error("[saveComment] Error:", e);
   }
 };
+
+const hasAddedElementNode = (mutations: MutationRecord[]): boolean =>
+  mutations.some((mutation) =>
+    Array.from(mutation.addedNodes).some(
+      (node) => node.nodeType === Node.ELEMENT_NODE
+    )
+  );
+
+const observer = new MutationObserver((mutations: MutationRecord[]) => {
+  // 拡張機能のコンテキストが有効かチェック
+  if (!isExtensionAlive()) {
+    observer.disconnect();
+    return;
+  }
+
+  // NOTE: Slack は入力中表示などでも DOM が変わるので、要素の追加時だけ走査する
+  if (!hasAddedElementNode(mutations)) return;
+
+  void sendNewComments();
+});
 
 const startObserving = () =>
   observer.observe(document.body, {
