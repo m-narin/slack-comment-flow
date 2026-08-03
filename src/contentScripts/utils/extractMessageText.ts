@@ -1,3 +1,5 @@
+import type { CommentToken } from "../../types/comment";
+
 /*
 NOTE: Slack のメッセージ本文は `.p-rich_text_section` の中にリッチテキストとして描画される。
       絵文字は <img>、改行は <br> や `.c-mrkdwn__br` といった要素で表現されているため、
@@ -66,9 +68,9 @@ const toUnicodeEmoji = (src: string): string | null => {
   }
 };
 
-const collectText = (node: Node, collected: string[]): void => {
+const collectTokens = (node: Node, tokens: CommentToken[]): void => {
   if (node.nodeType === Node.TEXT_NODE) {
-    collected.push(node.nodeValue || "");
+    tokens.push({ type: "text", value: node.nodeValue || "" });
     return;
   }
 
@@ -78,17 +80,13 @@ const collectText = (node: Node, collected: string[]): void => {
 
   // NOTE: <br aria-hidden="true"> のように改行要素が aria-hidden を持つので先に処理する
   if (element.tagName === "BR" || element.classList.contains("c-mrkdwn__br")) {
-    collected.push(" ");
+    tokens.push({ type: "text", value: " " });
     return;
   }
 
   if (isIgnoredElement(element)) return;
 
-  /*
-  NOTE: 絵文字は <img> なのでテキストが取れない。
-        標準絵文字は画像 URL から実際の絵文字の文字に復元する。
-        復元できないカスタム絵文字は alt（`:name:` 形式）で代用する。
-  */
+  // NOTE: 絵文字は <img> なのでテキストが取れない
   if (element.tagName === "IMG") {
     const image = element as HTMLImageElement;
 
@@ -97,41 +95,98 @@ const collectText = (node: Node, collected: string[]): void => {
           image.src は属性値ではなく解決済みの絶対 URL を返す。
     */
     const src = image.currentSrc || image.src || "";
-    const emoji = toUnicodeEmoji(src);
+    const alt = element.getAttribute("alt") || "";
 
-    collected.push(emoji || element.getAttribute("alt") || "");
+    // NOTE: 標準絵文字は画像 URL から実際の絵文字の文字に復元できる
+    const emoji = toUnicodeEmoji(src);
+    if (emoji) {
+      tokens.push({ type: "text", value: emoji });
+      return;
+    }
+
+    /*
+    NOTE: カスタム絵文字は Unicode に対応する文字がないので画像として流す。
+          読み込みに失敗した場合は流す側で alt（`:name:` 形式）に差し替える。
+    */
+    if (src) {
+      tokens.push({ type: "image", src, alt });
+      return;
+    }
+
+    tokens.push({ type: "text", value: alt });
     return;
   }
 
-  element.childNodes.forEach((childNode) => collectText(childNode, collected));
+  element.childNodes.forEach((childNode) => collectTokens(childNode, tokens));
 };
 
-const normalize = (text: string): string => {
-  // NOTE: 一行に流すので、改行や連続する空白は半角スペース一つにまとめる
-  return text.replace(/\s+/g, " ").trim();
+/*
+NOTE: 一行に流すので、改行や連続する空白は半角スペース一つにまとめ、
+      前後の空白を落とす。テキストは画像を挟んで分断されているため、
+      隣り合うテキストを連結してから処理する。
+*/
+const normalizeTokens = (tokens: CommentToken[]): CommentToken[] => {
+  const merged: CommentToken[] = [];
+
+  tokens.forEach((token) => {
+    const previous = merged[merged.length - 1];
+
+    if (token.type === "text" && previous?.type === "text") {
+      previous.value += token.value;
+      return;
+    }
+
+    merged.push({ ...token });
+  });
+
+  merged.forEach((token, index) => {
+    if (token.type !== "text") return;
+
+    let value = token.value.replace(/\s+/g, " ");
+
+    if (index === 0) value = value.replace(/^ /, "");
+    if (index === merged.length - 1) value = value.replace(/ $/, "");
+
+    token.value = value;
+  });
+
+  return merged.filter((token) => token.type !== "text" || token.value !== "");
 };
 
-export const extractPlainText = (element: Element): string => {
-  const collected: string[] = [];
-  collectText(element, collected);
+export const extractPlainTokens = (element: Element): CommentToken[] => {
+  const tokens: CommentToken[] = [];
+  collectTokens(element, tokens);
 
-  return normalize(collected.join(""));
+  return normalizeTokens(tokens);
 };
 
 /*
 NOTE: 一つのメッセージが複数の `.p-rich_text_section` に分かれることがある
       （箇条書きや引用を挟んだ場合など）ので、それらを連結して一つのコメントにする
 */
-export const extractMessageText = (messageContainer: Element): string => {
+export const extractMessageTokens = (
+  messageContainer: Element
+): CommentToken[] => {
   const sections = messageContainer.querySelectorAll(".p-rich_text_section");
-  if (sections.length === 0) return "";
+  if (sections.length === 0) return [];
 
-  const texts: string[] = [];
+  const tokens: CommentToken[] = [];
 
   sections.forEach((section) => {
-    const text = extractPlainText(section);
-    if (text) texts.push(text);
+    const sectionTokens = extractPlainTokens(section);
+    if (sectionTokens.length === 0) return;
+
+    // NOTE: セクションの区切りは半角スペースで繋ぐ
+    if (tokens.length > 0) tokens.push({ type: "text", value: " " });
+
+    tokens.push(...sectionTokens);
   });
 
-  return texts.join(" ");
+  return normalizeTokens(tokens);
 };
+
+// NOTE: テストとデバッグ用。画像は alt で代用した文字列にする
+export const extractMessageText = (messageContainer: Element): string =>
+  extractMessageTokens(messageContainer)
+    .map((token) => (token.type === "text" ? token.value : token.alt))
+    .join("");

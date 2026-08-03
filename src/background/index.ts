@@ -1,3 +1,4 @@
+import type { CommentToken } from "../types/comment";
 import { injectComment } from "./injectComment";
 
 const StorageKeys = {
@@ -19,7 +20,7 @@ NOTE: 同時に複数のコメントが届いた場合、一つずつ間隔を�
 */
 const COMMENT_INTERVAL_MS = 700;
 
-const commentQueue: string[] = [];
+const commentQueue: CommentToken[][] = [];
 let isDrainingCommentQueue = false;
 
 const drainCommentQueue = (): void => {
@@ -35,7 +36,7 @@ const drainCommentQueue = (): void => {
   setTimeout(drainCommentQueue, COMMENT_INTERVAL_MS);
 };
 
-const enqueueComment = (comment: string): void => {
+const enqueueComment = (comment: CommentToken[]): void => {
   commentQueue.push(comment);
 
   if (isDrainingCommentQueue) return;

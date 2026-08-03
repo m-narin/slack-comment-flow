@@ -1,5 +1,6 @@
+import type { CommentToken } from "../types/comment";
 import { decodeHTMLSpecialWord } from "./utils/decodeHTMLSpecialWord";
-import { extractMessageText } from "./utils/extractMessageText";
+import { extractMessageTokens } from "./utils/extractMessageText";
 
 const SLACK_SELECTOR_OBJ = {
   // メッセージ一覧のペイン（サイドバーの仮想リストと区別するために使う）
@@ -46,7 +47,7 @@ const resetBaseline = (
   streamedMessageTsSet.clear();
 };
 
-const extractNewMessages = (): string[] => {
+const extractNewMessages = (): CommentToken[][] => {
   const messageContainers = getMessageContainers();
   if (messageContainers.length === 0) return [];
 
@@ -61,7 +62,7 @@ const extractNewMessages = (): string[] => {
     return [];
   }
 
-  const messages: string[] = [];
+  const messages: CommentToken[][] = [];
 
   messageContainers.forEach((messageContainer) => {
     const ts = messageContainer.getAttribute("data-msg-ts");
@@ -72,8 +73,8 @@ const extractNewMessages = (): string[] => {
 
     streamedMessageTsSet.add(ts);
 
-    const message = extractMessageText(messageContainer);
-    if (!message) return;
+    const message = extractMessageTokens(messageContainer);
+    if (message.length === 0) return;
 
     messages.push(message);
   });
@@ -117,7 +118,11 @@ const sendNewComments = async (): Promise<void> => {
     messages.forEach((message) => {
       chrome.runtime.sendMessage({
         method: "setComment",
-        value: decodeHTMLSpecialWord(message),
+        value: message.map((token) =>
+          token.type === "text"
+            ? { ...token, value: decodeHTMLSpecialWord(token.value) }
+            : token
+        ),
       });
     });
   } catch (e) {

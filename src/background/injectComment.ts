@@ -1,5 +1,12 @@
-// NOTE: 中身が子フレーム / 別レイヤーにあり、appendChild しても描画されない要素
-const UNAPPENDABLE_TAG_NAMES = ["IFRAME", "FRAME", "VIDEO", "CANVAS"];
+import type { CommentToken } from "../types/comment";
+
+/*
+NOTE: この関数は chrome.scripting.executeScript で「文字列化して」対象ページに注入される。
+      そのため外部スコープの変数・定数・関数を一切参照できない（ReferenceError になる）。
+      定数もヘルパーもすべて関数の中に置くこと。型は実行時に消えるので import してよい。
+
+SEE: https://developer.chrome.com/docs/extensions/reference/api/scripting#injected-code
+*/
 
 /*
 NOTE: Fullscreen API で全画面表示中の要素は top layer に上がるため、
@@ -17,13 +24,16 @@ NOTE: Fullscreen API で全画面表示中の要素は top layer に上がるた
 SEE: https://developer.mozilla.org/en-US/docs/Web/API/Document/fullscreenElement
      https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context
 */
-export const injectComment = async (message: string) => {
+export const injectComment = async (tokens: CommentToken[]) => {
   const getTargetNode = (): Element => {
+    // NOTE: 中身が子フレーム / 別レイヤーにあり、appendChild しても描画されない要素
+    const unappendableTagNames = ["IFRAME", "FRAME", "VIDEO", "CANVAS"];
+
     const fullscreenElement = document.fullscreenElement;
 
     if (
       fullscreenElement &&
-      !UNAPPENDABLE_TAG_NAMES.includes(fullscreenElement.tagName)
+      !unappendableTagNames.includes(fullscreenElement.tagName)
     ) {
       return fullscreenElement;
     }
@@ -43,7 +53,25 @@ export const injectComment = async (message: string) => {
 
   const comment = document.createElement("span");
 
-  comment.textContent = message;
+  /*
+  NOTE: カスタム絵文字は画像なので、テキストと <img> を並べて組み立てる。
+        高さを 1em にすることで文字サイズの変更に追従させる。
+  */
+  tokens.forEach((token) => {
+    if (token.type === "text") {
+      comment.appendChild(document.createTextNode(token.value));
+      return;
+    }
+
+    const image = document.createElement("img");
+
+    image.src = token.src;
+    image.alt = token.alt;
+    image.style.height = "1em";
+    image.style.verticalAlign = "-0.15em";
+
+    comment.appendChild(image);
+  });
 
   targetNode.appendChild(comment);
 
@@ -114,7 +142,58 @@ export const injectComment = async (message: string) => {
     }
   };
 
-  const duration = getDuration(message.length);
+  const messageLength = tokens.reduce(
+    (length, token) =>
+      length + (token.type === "text" ? token.value.length : token.alt.length),
+    0
+  );
+
+  const duration = getDuration(messageLength);
+
+  /*
+  NOTE: 画像の読み込みが終わらないと offsetWidth が確定せず、流す距離がずれる。
+        読み込みに失敗した場合（流し先ページの CSP で画像が弾かれた場合など）は
+        alt（`:name:` 形式）のテキストに差し替えて、最低限読める状態にする。
+  */
+  const waitForImages = async (): Promise<void> => {
+    const images = Array.from(comment.querySelectorAll("img"));
+    if (images.length === 0) return;
+
+    const fallbackToAlt = (image: HTMLImageElement) =>
+      image.replaceWith(document.createTextNode(image.alt));
+
+    await Promise.all(
+      images.map(
+        (image) =>
+          new Promise<void>((resolve) => {
+            if (image.complete) {
+              // NOTE: complete でも naturalWidth が 0 なら読み込みに失敗している
+              if (image.naturalWidth === 0) fallbackToAlt(image);
+              resolve();
+              return;
+            }
+
+            image.addEventListener("load", () => resolve(), { once: true });
+            image.addEventListener(
+              "error",
+              () => {
+                fallbackToAlt(image);
+                resolve();
+              },
+              { once: true }
+            );
+
+            // NOTE: 応答がないまま流れなくなるのを防ぐ保険
+            setTimeout(() => {
+              fallbackToAlt(image);
+              resolve();
+            }, 1000);
+          })
+      )
+    );
+  };
+
+  await waitForImages();
 
   const streamCommentUI = comment.animate(
     {
