@@ -58,7 +58,12 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
           if (!tabs[0]?.id || !res[StorageKeys.Comment]) return;
 
           chrome.scripting.executeScript({
-            target: { tabId: tabs[0].id },
+            /*
+            NOTE: Google スライドのスライドショーのように、全画面になる要素が
+                  iframe の中にあるケースがある。親フレームからは中身を触れないので
+                  全フレームに注入し、どのフレームで流すかは injectComment 側で判定する。
+            */
+            target: { tabId: tabs[0].id, allFrames: true },
             func: injectComment,
             args: [res[StorageKeys.Comment]],
           });
