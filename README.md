@@ -27,6 +27,40 @@ npm run build
 「パッケージ化されていない拡張機能を読みこむ」にて`/dist`フォルダーを選択。
 これにより拡張機能が有効化されます。
 
+## テスト
+
+```sh
+npm test
+```
+
+Node 標準の `node:test` と jsdom で動かしています。拡張機能を Chrome に読み込まなくても、コメントの抽出と差し込みを確認できます。
+
+### テストの構成
+
+| ファイル | 内容 |
+| --- | --- |
+| `tests/extractMessageText.test.ts` | Slack の DOM からの本文抽出。タグ・送信者名・時刻の除去、改行や空白の扱い、絵文字の復元 |
+| `tests/injectComment.test.ts` | コメントの差し込み。差し込み先の選択（通常時 / 全画面表示）、絵文字の組み立て、画像を読み込めなかったときの代替表示 |
+| `tests/decodeHTMLSpecialWord.test.ts` | HTML エンティティのデコード |
+| `tests/constraints.test.ts` | 下記の「踏んだ不具合」の回帰テスト |
+
+実際の Slack の HTML はワークスペースの中身そのものなので Repository には置けません。代わりに `tests/helpers/dom.ts` で構造だけを真似た DOM を組み立てています。**Slack 側の構造が変わったときはここも一緒に直してください。**
+
+### 実際に踏んだ不具合の回帰テスト
+
+どちらも「書けてしまうが、特定の状況でだけ壊れる」種類のもので、普通に動かしているだけでは気づけませんでした。
+
+- **content script でタイマーを使わない** — バックグラウンドタブでは throttle される（詳細は[バックグラウンドタブでのタイマー throttle に注意](#バックグラウンドタブでのタイマー-throttle-に注意)）。`tests/constraints.test.ts` がソースを静的に見て検出します
+- **`injectComment` が外部スコープを参照しない** — 注入先で `ReferenceError` になる（詳細は[injectComment の中で外部スコープを参照しないこと](#injectcomment-の中で外部スコープを参照しないこと)）。`tests/injectComment.test.ts` が `toString()` → `new Function` で**実際の注入条件を再現**して検証します
+
+### テストでカバーできていない範囲
+
+`src/contentScripts/saveComment.ts` のロジック（baseline の管理、チャンネル切り替え、新規投稿だけを流す判定）はテストしていません。モジュールを読み込んだ時点で `MutationObserver` の登録などの副作用が走る作りのため、テストするには純粋な関数として切り出すリファクタが必要です。
+
+### なぜ Vitest ではないのか
+
+Vitest は Vite 5 以降を要求しますが、この Project はベースにした google-meet-comment-flow の Vite 2 系をそのまま使っています。テストのために本体のビルド環境を壊したくないので、`tsc` で CommonJS に落としてから `node --test` で実行する構成にしました（`tsconfig.test.json`）。
+
 ## 動作方法
 
 まず Web 版 Slack（`https://app.slack.com/`）を開き、実況コメントを流したいチャンネルを表示しておきます。
