@@ -96,7 +96,8 @@ export const injectComment = async (message: string) => {
   comment.style["top"] = commentStyle["top"];
   comment.style["fontSize"] = commentStyle["fontSize"];
 
-  comment.style["color"] = storedColorMessage || "green";
+  // NOTE: popup 側の初期値（Colors.Blue）と揃えること
+  comment.style["color"] = storedColorMessage || "blue";
 
   comment.style["position"] = "absolute";
   comment.style["zIndex"] = "2147483647";

@@ -19,7 +19,7 @@ const FontSizes = { Xs: "XS", S: "S", M: "M", L: "L", Xl: "XL" } as const;
 type FontSize = typeof FontSizes[keyof typeof FontSizes];
 
 const App = () => {
-  const [color, setColor] = useState<Color>(Colors.Green);
+  const [color, setColor] = useState<Color>(Colors.Blue);
 
   const [fontSize, setFontSize] = useState<FontSize>(FontSizes.L);
   const [isEnabledStreaming, setIsEnabledStreaming] = useState<boolean>(false);
