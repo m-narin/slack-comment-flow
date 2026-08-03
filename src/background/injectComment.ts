@@ -6,19 +6,32 @@ export const injectComment = async (message: string) => {
 
   comment.textContent = message;
 
-  // NOTE: google slide full screen mode element
-  const gSlideContentNode = document.querySelector(
-    "body > div.punch-full-screen-element.punch-full-window-overlay"
-  );
-
   /*
-  NOTE: When the focused tab is on google slide full screen mode,
-        target node is the specific div, whose z-index is max value
-        as the same as the value of streamed comments
+  NOTE: Fullscreen API で全画面表示中の要素は top layer に上がるため、
+        document.body の下に入れたコメントは z-index をいくら上げても画面に出ない。
+        Google スライドのプレゼンモードなどでは、全画面要素の中に入れる必要がある。
 
-  SEE: https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context
+  SEE: https://developer.mozilla.org/en-US/docs/Web/API/Document/fullscreenElement
+       https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context
   */
-  const targetNode = gSlideContentNode || document.body;
+  const getFullscreenNode = (): Element | null => {
+    const fullscreenElement = document.fullscreenElement;
+
+    /*
+    NOTE: <video> や <canvas> が全画面のときは子要素を持てないので諦めて body に戻す。
+          Google スライドのプレゼンモードは div なので問題ない。
+    */
+    if (fullscreenElement && fullscreenElement.tagName !== "VIDEO") {
+      return fullscreenElement;
+    }
+
+    // NOTE: 旧 google slide full screen mode element へのフォールバック
+    return document.querySelector(
+      "body > div.punch-full-screen-element.punch-full-window-overlay"
+    );
+  };
+
+  const targetNode = getFullscreenNode() || document.body;
 
   targetNode.appendChild(comment);
 
@@ -47,7 +60,12 @@ export const injectComment = async (message: string) => {
   comment.setAttribute("class", "slack-comment-flow");
 
   const footerHeight = 88;
-  const scrollTopHeight = window.pageYOffset;
+  /*
+  NOTE: 全画面要素の中に入れる場合、position: absolute の基準は
+        （全画面要素には UA スタイルで position: fixed が付くため）その要素になる。
+        ページのスクロール量を足すと下にずれるので、body に入れるときだけ足す。
+  */
+  const scrollTopHeight = targetNode === document.body ? window.pageYOffset : 0;
   const topPosition =
     scrollTopHeight +
     Math.floor((screenHeight - letterSize - footerHeight) * Math.random());
@@ -101,6 +119,7 @@ export const injectComment = async (message: string) => {
   );
 
   streamCommentUI.onfinish = () => {
-    targetNode.removeChild(comment);
+    // NOTE: 流れている途中でプレゼンモードに入ると親が変わりうるので remove() を使う
+    comment.remove();
   };
 };
