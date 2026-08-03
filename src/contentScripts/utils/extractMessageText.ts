@@ -23,6 +23,44 @@ const isIgnoredElement = (element: Element): boolean => {
   return false;
 };
 
+// NOTE: 標準絵文字の画像はこのパスから配信される（カスタム絵文字は emoji.slack-edge.com）
+const STANDARD_EMOJI_ASSET_PATH = "production-standard-emoji-assets";
+
+/*
+NOTE: 標準絵文字の画像 URL は、ファイル名が Unicode のコードポイントになっている。
+      そこから実際の絵文字の文字を復元する。
+
+      例: .../production-standard-emoji-assets/16.0/apple-medium/1f64c.png
+          -> "1f64c" -> 🙌
+
+      ZWJ シーケンスや国旗はハイフン区切りで複数のコードポイントが入る。
+      例: 1f469-200d-1f4bb.png -> 👩‍💻
+
+      Slack のカスタム絵文字は Unicode に対応する文字がないので復元できない。
+      その場合は null を返し、呼び出し側で alt（`:name:` 形式）にフォールバックする。
+*/
+const toUnicodeEmoji = (src: string): string | null => {
+  if (!src.includes(STANDARD_EMOJI_ASSET_PATH)) return null;
+
+  // NOTE: クエリ文字列と拡張子を落としてファイル名だけにする
+  const fileName = src.split("/").pop()?.split("?")[0] || "";
+  const codePointsText = fileName.replace(/\.[a-z0-9]+$/i, "");
+
+  // NOTE: 16 進数をハイフンで繋いだ形式でなければ絵文字として扱わない
+  if (!/^[0-9a-f]{1,6}(-[0-9a-f]{1,6})*$/i.test(codePointsText)) return null;
+
+  const codePoints = codePointsText
+    .split("-")
+    .map((codePoint) => parseInt(codePoint, 16));
+
+  try {
+    return String.fromCodePoint(...codePoints);
+  } catch {
+    // NOTE: Unicode の範囲外だった場合
+    return null;
+  }
+};
+
 const collectText = (node: Node, collected: string[]): void => {
   if (node.nodeType === Node.TEXT_NODE) {
     collected.push(node.nodeValue || "");
@@ -41,9 +79,15 @@ const collectText = (node: Node, collected: string[]): void => {
 
   if (isIgnoredElement(element)) return;
 
-  // NOTE: カスタム絵文字を含む絵文字は alt に `:raised_hands:` 形式で入っている
+  /*
+  NOTE: 絵文字は <img> なのでテキストが取れない。
+        標準絵文字は画像 URL から実際の絵文字の文字に復元する。
+        復元できないカスタム絵文字は alt（`:name:` 形式）で代用する。
+  */
   if (element.tagName === "IMG") {
-    collected.push(element.getAttribute("alt") || "");
+    const emoji = toUnicodeEmoji(element.getAttribute("src") || "");
+
+    collected.push(emoji || element.getAttribute("alt") || "");
     return;
   }
 
