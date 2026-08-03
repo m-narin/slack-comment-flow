@@ -2,38 +2,31 @@
 const UNAPPENDABLE_TAG_NAMES = ["IFRAME", "FRAME", "VIDEO", "CANVAS"];
 
 /*
-NOTE: この関数は allFrames: true で全フレームに注入されるので、
-      まずこのフレームで流すべきかを判定し、不要なフレームでは何もしない。
+NOTE: Fullscreen API で全画面表示中の要素は top layer に上がるため、
+      document.body の下に入れたコメントは z-index をいくら上げても画面に出ない。
+      全画面表示中は、全画面になっている要素の中に入れる必要がある。
+
+      ただし全画面になっているのが iframe の場合、中身は子フレームなので
+      iframe に appendChild しても描画されない。この場合コメントは流せない。
+
+      Google スライドのスライドショーは iframe の中で描画されるため、
+      全画面にするとこのケースに当たり、コメントは流れない。
+      全画面にしないスライドショーであれば iframe の上に乗るので流れる。
+      詳細は README の「Google スライドのスライドショーで使う場合」を参照。
 
 SEE: https://developer.mozilla.org/en-US/docs/Web/API/Document/fullscreenElement
      https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context
 */
 export const injectComment = async (message: string) => {
-  const getTargetNode = (): Element | null => {
+  const getTargetNode = (): Element => {
     const fullscreenElement = document.fullscreenElement;
 
-    if (fullscreenElement) {
-      /*
-      NOTE: Fullscreen API で全画面表示中の要素は top layer に上がるため、
-            document.body の下に入れたコメントは z-index をいくら上げても画面に出ない。
-            全画面要素の中に入れる必要がある。
-
-            ただし全画面になっているのが iframe の場合、中身は子フレームなので
-            iframe に appendChild しても描画されない。このとき子フレーム側の
-            document.fullscreenElement は本物の全画面要素を指すので、そちらに任せる。
-
-            Google スライドのスライドショーは iframe の中で描画されるため、
-            全画面にするとこのケースに入る。
-      */
-      if (UNAPPENDABLE_TAG_NAMES.includes(fullscreenElement.tagName)) {
-        return null;
-      }
-
+    if (
+      fullscreenElement &&
+      !UNAPPENDABLE_TAG_NAMES.includes(fullscreenElement.tagName)
+    ) {
       return fullscreenElement;
     }
-
-    // NOTE: 全画面でないときは、二重に流れないようトップフレームにだけ入れる
-    if (window !== window.top) return null;
 
     // NOTE: 旧 google slide full screen mode element へのフォールバック
     const gSlideContentNode = document.querySelector(
@@ -44,7 +37,6 @@ export const injectComment = async (message: string) => {
   };
 
   const targetNode = getTargetNode();
-  if (!targetNode) return;
 
   const screenHeight = window.innerHeight;
   const screenWidth = window.innerWidth;
