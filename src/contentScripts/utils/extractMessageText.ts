@@ -42,9 +42,14 @@ NOTE: 標準絵文字の画像 URL は、ファイル名が Unicode のコード
 const toUnicodeEmoji = (src: string): string | null => {
   if (!src.includes(STANDARD_EMOJI_ASSET_PATH)) return null;
 
-  // NOTE: クエリ文字列と拡張子を落としてファイル名だけにする
+  /*
+  NOTE: クエリ文字列・拡張子・解像度サフィックスを落としてコードポイントだけにする。
+        Retina ディスプレイでは `1f64c@2x.png` のように `@2x` が付く。
+  */
   const fileName = src.split("/").pop()?.split("?")[0] || "";
-  const codePointsText = fileName.replace(/\.[a-z0-9]+$/i, "");
+  const codePointsText = fileName
+    .replace(/\.[a-z0-9]+$/i, "")
+    .split("@")[0];
 
   // NOTE: 16 進数をハイフンで繋いだ形式でなければ絵文字として扱わない
   if (!/^[0-9a-f]{1,6}(-[0-9a-f]{1,6})*$/i.test(codePointsText)) return null;
@@ -85,7 +90,14 @@ const collectText = (node: Node, collected: string[]): void => {
         復元できないカスタム絵文字は alt（`:name:` 形式）で代用する。
   */
   if (element.tagName === "IMG") {
-    const emoji = toUnicodeEmoji(element.getAttribute("src") || "");
+    const image = element as HTMLImageElement;
+
+    /*
+    NOTE: src 属性が無く srcset だけ設定されていることがあるので currentSrc も見る。
+          image.src は属性値ではなく解決済みの絶対 URL を返す。
+    */
+    const src = image.currentSrc || image.src || "";
+    const emoji = toUnicodeEmoji(src);
 
     collected.push(emoji || element.getAttribute("alt") || "");
     return;
