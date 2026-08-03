@@ -9,4 +9,9 @@ NOTE: 流すコメント 1 件を表すトークン列。
 */
 export type CommentToken =
   | { type: "text"; value: string }
+  /*
+  NOTE: alt は画像を読み込めなかったときの代替テキスト。
+        標準絵文字なら Unicode の絵文字（🙌）、
+        カスタム絵文字なら `:name:` 形式が入る。
+  */
   | { type: "image"; src: string; alt: string };

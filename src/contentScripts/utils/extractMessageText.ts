@@ -95,24 +95,24 @@ const collectTokens = (node: Node, tokens: CommentToken[]): void => {
           image.src は属性値ではなく解決済みの絶対 URL を返す。
     */
     const src = image.currentSrc || image.src || "";
-    const alt = element.getAttribute("alt") || "";
-
-    // NOTE: 標準絵文字は画像 URL から実際の絵文字の文字に復元できる
-    const emoji = toUnicodeEmoji(src);
-    if (emoji) {
-      tokens.push({ type: "text", value: emoji });
-      return;
-    }
 
     /*
-    NOTE: カスタム絵文字は Unicode に対応する文字がないので画像として流す。
-          読み込みに失敗した場合は流す側で alt（`:name:` 形式）に差し替える。
+    NOTE: 標準絵文字もカスタム絵文字も、Slack が表示しているのと同じ画像で流す。
+          こうすると Slack 上の見た目と一致し、OS の絵文字フォントにも依存しない。
+
+          画像を読み込めなかったとき（流し先ページの CSP で弾かれた場合など）に
+          備えて、代替テキストを alt に持たせておく。
+          標準絵文字は画像 URL から Unicode の絵文字に復元できるのでそれを使い、
+          復元できないカスタム絵文字は Slack の alt（`:name:` 形式）を使う。
     */
+    const alt = toUnicodeEmoji(src) || element.getAttribute("alt") || "";
+
     if (src) {
       tokens.push({ type: "image", src, alt });
       return;
     }
 
+    // NOTE: src が無い場合は画像にできないのでテキストとして流す
     tokens.push({ type: "text", value: alt });
     return;
   }
