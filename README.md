@@ -61,6 +61,28 @@ Node 標準の `node:test` と jsdom で動かしています。拡張機能を 
 
 Vitest は Vite 5 以降を要求しますが、この Project はベースにした google-meet-comment-flow の Vite 2 系をそのまま使っています。テストのために本体のビルド環境を壊したくないので、`tsc` で CommonJS に落としてから `node --test` で実行する構成にしました（`tsconfig.test.json`）。
 
+### tsconfig について
+
+TypeScript の設定は下記の 2 つだけです。
+
+| ファイル | 用途 |
+| --- | --- |
+| `tsconfig.json` | 拡張機能本体・テスト・`vite.config.ts` の型チェック（Editor もこれを見る） |
+| `tsconfig.test.json` | テストを `node --test` 用に CommonJS へ変換する |
+
+**非推奨・削除済みのオプションを使わないでください。** Editor が同梱する TypeScript は Project の TypeScript より新しいことが多く、`tsconfig.json` にエラーが表示される原因になります。実際に下記を踏みました。
+
+- `"moduleResolution": "Node"`（= node10）は非推奨。バンドラを使う本体は `"Bundler"`、Node で動かすテストは `"NodeNext"` を使う
+- `"esModuleInterop": false` は TypeScript 7.0 で削除済み。指定せずデフォルト（有効）のままにする
+
+設定を変えたら、新しい TypeScript でも警告が出ないことを確認できます。
+
+```sh
+npx -p typescript@latest tsc --noEmit -p tsconfig.json
+```
+
+なお `vite.config.ts` 用に `tsconfig.node.json` を分けていましたが、`references` は `tsc -b` でしか使われず機能していなかったため、`tsconfig.json` に統合しました。
+
 ## 動作方法
 
 まず Web 版 Slack（`https://app.slack.com/`）を開き、実況コメントを流したいチャンネルを表示しておきます。
